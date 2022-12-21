@@ -6,7 +6,7 @@ class TestGameState(unittest.TestCase):
 
     <DONE>  piece_add(x, y, kind)
     <DONE>  piece_remove(x, y)
-    <    >  piece_remove_all(f)
+    <DONE>  piece_remove_all(f)
 
     <DONE>  board_add(x, y)
     <DONE>  board_add_iter(iterator)
@@ -227,6 +227,71 @@ class TestGameState(unittest.TestCase):
             self.gs.piece_remove(0, 0)
             self.assertEqual(self.gs.pieces, {})
 
+    def test_piece_remove_all(self):
+        # SETUP board and player
+        S = {(0, 0), (1, 0), (0, 1), (1, 1)}
+        self.gs.board_add_iter(S)
+        self.gs.player_add()
+        self.gs.player_add()
+        assert self.gs.player_num == 2
+        assert self.gs.board == S
+        assert self.gs.pieces == {}
 
-if __name__ == '__main__':
-    unittest.main()
+        # SETUP filters
+        filters = [
+            lambda x, y, kind: True,        # Remove all
+            lambda x, y, kind: y == 0,      # Remove all in the line y=0
+            lambda x, y, kind: kind == "0", # Remove all piece of player 0
+            lambda x, y, kind: False,       # Removes nothing
+        ]
+
+        # Removing from board with no pieces has no effect
+        #  default case
+        with self.subTest("no piece, default"):
+            self.gs.piece_remove_all()
+            # Pieces should be empty. The rest should be unaltered
+            self.assertEqual(self.gs.pieces, {})
+            self.assertEqual(self.gs.board, S)
+            self.assertEqual(self.gs.player_num, 2)
+
+        for i, f in enumerate(filters):
+            with self.subTest("no piece, filter", case=i):
+                self.gs.piece_remove_all(f)
+                # pieces should be empty, the rest should be unaltered 
+                self.assertEqual(self.gs.pieces, {})
+                self.assertEqual(self.gs.board, S)
+                self.assertEqual(self.gs.player_num, 2)
+
+        # Only pieces satisfying f are removed when pieces are on board
+        #  Default case
+        with self.subTest("with pieces, default"):
+            self.gs.piece_remove_all()
+            self.gs.piece_add(0, 0, "u")
+            self.gs.piece_add(0, 1, "j")
+            self.gs.piece_add(1, 0, "0")
+            self.gs.piece_add(1, 1, "1")
+            assert self.gs.pieces == {(0, 0): "u", (0, 1): "j",
+                (1, 0): "0", (1, 1): "1"}
+
+            self.gs.piece_remove_all()
+            self.assertEqual(self.gs.pieces, {})
+
+        #  Filter case
+        for i, f in enumerate(filters):
+            with self.subTest("with pieces, filter", case=i):
+                self.gs.piece_remove_all()
+                self.gs.piece_add(0, 0, "u")
+                self.gs.piece_add(0, 1, "j")
+                self.gs.piece_add(1, 0, "0")
+                self.gs.piece_add(1, 1, "1")
+                D = {(0, 0): "u", (0, 1): "j", (1, 0): "0", (1, 1): "1"}
+                assert self.gs.pieces == D
+
+                self.gs.piece_remove_all(f)
+                D = {(x, y): k for (x, y), k in D.items() if not f(x, y, k)}
+
+                self.assertEqual(self.gs.pieces, D)
+                self.assertEqual(self.gs.board, S)
+                self.assertEqual(self.gs.player_num, 2)
+
+

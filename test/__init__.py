@@ -6,3 +6,7 @@ sys.path.insert(0, "../.")
 
 # Submodules Import
 from test.test_pieces import *
+
+# Start all tests
+if __name__ == '__main__':
+    unittest.main()
