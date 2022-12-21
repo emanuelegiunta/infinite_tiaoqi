@@ -1,3 +1,7 @@
+from collections import deque
+
+
+
 class GameState:
     ''' Class containing abstract informations on the current game
     
@@ -25,11 +29,11 @@ class GameState:
         # Cached objects: To speedup membership checks (frequent operation)
         #  objects are cached to sets to allow for fast membership checks
         #
-        # sets of object that can be jumped over (but not on)
+        # set of object that can be jumped over (but not on)
         self._ch_jump = set()
 
-        # list of object that cannot be jumped over nor on
-        self._ch_unjump = set()
+        # set of all objects that occupies a tile
+        self._ch_pieces = set()
 
 
         # current player
@@ -41,6 +45,15 @@ class GameState:
 
         # number of players
         self._player_num = 0
+
+        # CONSTANTS
+        #  difference between a tile and neighbouring cells.
+        #  
+        #  Note: This need not to be a constant. If one wish to explore more 
+        #        interesting topologies it's enough to lowercase this and
+        #        implement getters/setters (and adjust a bit .paths)
+        self._NEIGHBOURHOOD = ((1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), 
+            (1, -1))
 
     # piece methods
     def piece_add(self, x, y, kind):
@@ -110,8 +123,9 @@ class GameState:
 
         else:
             self._pieces = {(x, y): k for (x, y), k in self._pieces.items()
-                if f(x, y, k)}
-            self._cache()
+                if not f(x, y, k)}
+        
+        self._cache()
 
     # board methods
     def board_add(self, x, y):
@@ -126,6 +140,7 @@ class GameState:
                 f"{type(y)}) instead")
 
         self._board.add((x, y))
+        self._cache()
 
     def board_add_iter(self, iterator):
         ''' Add the couples in `iterator` to the board. Those elements that 
@@ -143,6 +158,7 @@ class GameState:
             raise TypeError(f"Board entries have type int!")
 
         self._board = self._board.union(new_tiles)
+        self._cache()
 
     def board_remove(self, x, y):
         ''' Remove the board place at position x, y. No error is raised if
@@ -157,6 +173,7 @@ class GameState:
                 "cointains a piece")
 
         self._board.discard((x, y))
+        self._cache()
 
     def board_remove_all(self, f=None):
         ''' Remove all pieces of board for which f returns true. If no function is specified all objects are removed.
@@ -237,14 +254,78 @@ class GameState:
 
     # game mechanics methods
     def paths(self, x, y):
-        ''' Return a list of positions that a piece in (x, y) can reach
+        ''' Return a DICT of positions that a piece in (x, y) can reach
+        structured as a tree, i.e. if p2 is the father of p1 then
+
+            tree[p1] = p2
+
+        The root of the tree points to None
         
         Errors      : ValueError if (x, y) not on board
 
         Note: (x, y) does not need to be a currently placed piece (although
-        the relevance of using this method for empty positions is unclear)
+        the relevance of using this method for empty positions is unclear).
+
+        Note: If a set of reacheable position is required one can use the 
+                set of keys, i.e. set(tree.keys()), as a surrogate
         '''
-        pass
+        
+        # BST Search
+        tree = {(x, y): None}
+        queue = deque()
+
+        queue.append((x, y))
+
+        # Search for jump chain [Note, this does not capture single jumps]
+        while queue:
+            (x_tmp, y_tmp) = queue.popleft()
+
+            # Examine the 6 possibile tiles you can reach from it
+            for dx, dy in self._NEIGHBOURHOOD:
+
+                # First, check that we are not landing in an element we already
+                #  explored
+                goal = (x_tmp + 2*dx, y_tmp + 2*dy)
+                jump = (x_tmp + dx, y_tmp + dy)
+
+                # If we visited the node, halt
+                if goal in tree.keys():
+                    continue
+
+                # If the jumping node is not a jumpable piece, halt
+                if jump not in self._ch_jump:
+                    continue
+
+                # If the goal node is not a tile or it is occupied, halt
+                if (goal in self._ch_pieces) or (goal not in self._board):
+                    continue
+
+                # If all checks passed we have that
+                #  goal is a free tile we did not explore before
+                #  jump is a jumpable piece
+                queue.append(goal)
+                tree[goal] = (x_tmp, y_tmp)
+
+        # Search for single jumps
+        for dx, dy in self._NEIGHBOURHOOD:
+            goal = (x + dx, y + dy)
+
+            # Check goal is free and on board
+            if goal in self._ch_pieces or goal not in self._board:
+                continue
+
+            # Note, we don't need to check that this places were reached before
+            #  (it can be shown that cells one can chain-jump into have a 
+            #  different invariant than the neighbouring cells)
+            #
+            # Notice2: this holds for all tologies in which the symmetric
+            #  closure of the neighbour (N union -N for (0,0)) do not admits
+            #  a set of four or more points aligned containing the center.
+            # 
+            # We can then add this to the tree
+            tree[goal] = (x, y)
+
+        return tree
 
     def move(self, x1, y1, x2, y2):
         ''' Move a piece in position (x1, y1) to position (x2, y2). Returns a shortest path from (x1, y1) to (x2, y2) including both points.
@@ -254,11 +335,69 @@ class GameState:
         Errors      : ValueError if (x1, y1) is not a piece (use add instead!)
         |           : ValueError if (x1, y1) is not a current player piece
         |               (use `move_no_check` instead)
-        |           : ValueError if (x2, y2) is a piece or out-of-board.
         |           : ValueError if there is no valid path from the two points.
         |               (if this is intended, use `move_no_checks` instead)
         '''
-        pass
+    
+        # Check that x1, y1 is a current player piece
+        if self._pieces.get((x1, y1), None) != str(self._player):
+            # choose the right error message
+
+            msg = ""
+            if (x1, y1) not in self._pieces.keys():
+                msg = f"Moving a piece from empty location ({x1}, {y1})."
+
+            elif not self._pieces[(x1, y1)].isdigit():
+                kind = self._pieces[(x1, y1)]
+                msg = (f"Moving non playing piece from location ({x1}, {y2}) "
+                    f"and kind {kind}")
+
+            else:
+                kind = self._pieces[(x1, y1)]
+                msg = (f"Moving a piece of player {kind} from ({x1}, {y1}) "
+                    f"during the turn of player {self._player}. If this is "
+                    f"intentional, use `.player` to change player round first")
+
+            raise ValueError(msg)
+
+        # Get the path tree
+        tree = self.paths(x1, y1)
+
+        # Check that a path exists
+        if (x2, y2) not in tree.keys():
+            # Choose the right error message
+            msg = ""
+            if (x2, y2) not in self._board:
+                msg = f"Moving a piece to ({x2}, {y2}), which is not on board!"
+
+            else:
+                msg = (f"Moving a piece from ({x1}, {y1}) to ({x2}, {y2}) but "
+                    "no path is available")
+
+            raise ValueError(msg)
+
+        # We can now move since
+        #   1. a path is guaranteed
+        #       1.1 hence the location is on board and is free
+        #   2. x1, y1 contains a corrent player piece
+        #       2.1 Thus x1, y1 is in _piece (we can pop() without default)
+        self._pieces[(x2, y2)] = self._pieces[(x1, y1)]
+        self._pieces.pop((x1, y1))
+
+        self._cache()
+
+        # We update player's turns
+        self._player = (self._player + 1)%self._player_num
+
+        # We build the path from tree
+        path = []
+        point = (x2, y2)
+        while point:    # We use the fact that the root's father is None.
+            path.append(point)
+            point = tree[point]
+
+        path.reverse()
+        return path
 
     def move_force(self, x1, y1, x2, y2):
         ''' Move a piece from position (x1, y1) to position (x2, y2). Its
@@ -278,7 +417,13 @@ class GameState:
         Cache data after some modifications have been performed. Currently has 
         to be called only after ANY modification of `._pieces`.
         '''
-        pass
+        
+        # _ch_jump is the set of `jumpable pieces`
+        self._ch_jump = {(x, y) for (x, y), kind in self._pieces.items() 
+            if kind != "u"}
+
+        # _ch_pieces is the set of all pieces
+        self._ch_pieces = set(self.pieces.keys())
 
 
     # miscellaneous methods
@@ -365,10 +510,9 @@ class GameState:
     def __str__(self):
 
         out = (
-            f"board = {self._board}\n"
+            #f"board = {self._board}\n"
             f"pieces = {self._pieces}\n"
-            f"player = ({self._player}: {self._player_num})"
-            )
+            f"player = ({self._player}: {self._player_num})")
 
         return out
 
@@ -380,6 +524,20 @@ class GameState:
 
 if __name__ == "__main__":
     gs = GameState()
+
+    # create a "large" square
+    L = [(x,y) for x in range(-4, 5) for y in range(-4, 5)]
+    gs.board_add_iter(L)
+
+    # create 2 player
+    gs.player_add()
+    gs.player_add()
+
+    # position 4 pieces
+    gs.piece_add(0, 0, "0")
+    gs.piece_add(0, 2, "0")
+    gs.piece_add(1, 0, "1")
+    gs.piece_add(-1, 2, "1")
 
     while True:
         cmd = input("> ")
@@ -394,8 +552,13 @@ if __name__ == "__main__":
             case "au":
                 gs.player_add()
 
-            case _ : 
+            case "p":
+                print(f"paths = {gs.paths(int(argv[1]), int(argv[2]))}\n")
+
+            case "m":
+                gs.move(*(int(argv[i]) for i in range(1,5)))
+
+            case _: 
                 print("I didn't understand that")
 
         print(gs)
-        gs.pieces = 10
