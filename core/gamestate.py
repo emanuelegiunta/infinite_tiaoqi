@@ -1,4 +1,4 @@
-class game_state:
+class GameState:
     ''' Class containing abstract informations on the current game
     
     What is it:
@@ -10,9 +10,8 @@ class game_state:
 
     What it DOES NOT assume:
     This class is agnostic to board shape (which can be even dynamically adjusted), number of pieces, number of players, existence of unjumpable pieces
-
-
     '''
+    
     def __init__(self): 
 
         # dictionary of pieces. Each piece is an entry of the form
@@ -70,12 +69,12 @@ class game_state:
 
         # Check that kind is valid
         if not (kind == "j" or kind == "u" or kind.isdigit()):
-            raise ValeuError(f"unrecognized kind = \"{kind}\"")
+            raise ValueError(f"unrecognized kind = \"{kind}\"")
 
         # Check that if kind is a valid player kind, it refers existing players
         if kind.isdigit() and not (0 <= int(kind) < self._player_num):
             raise ValueError(f"adding piece for uninitialized player "
-                f"{int(king)}")
+                f"{int(kind)}")
 
         # Insert the piece
         self._pieces[(x, y)] = kind
@@ -84,9 +83,15 @@ class game_state:
     def piece_remove(self, x, y):
         ''' Remove the object currently stored at position (x, y). No error is
         thrown if no piece is at position (x, y).
+
+        Implementation Note: No error should be thrown from this function as
+        no typecheck is performed on x, y (if they are malformed, (x, y) is
+        not going to be mapped to any value in self._pieces). 
         '''
 
-        pass
+        # Pop with default value raises no error when the key is not present
+        self._pieces.pop((x, y), None)
+        self._cache()
 
     def piece_remove_all(self, f=None):
         ''' Remove all objects for which f returns true. If no function is
@@ -98,18 +103,26 @@ class game_state:
         Implementation Note: the default case should be f=lambda x, y, k: True
         '''
 
-        pass
+        if f is None:
+            # Instead of actually removing all items, we simply reset the
+            # dictionary
+            self._pieces = {}
+
+        else:
+            self._pieces = {(x, y): k for (x, y), k in self._pieces.items()
+                if f(x, y, k)}
+            self._cache()
 
     # board methods
     def board_add(self, x, y):
         ''' Add position x, y on the board. If (x, y) was already on board
         nothing happens.
 
-        Errors      : ValueError if x, y are not integer values
+        Errors      : TypeError if x, y are not integer values
         '''
 
         if type(x) != int or type(y) != int:
-            TypeError(f"Board entries have type int, got ({type(x)}, "
+            raise TypeError(f"Board entries have type int, got ({type(x)}, "
                 f"{type(y)}) instead")
 
         self._board.add((x, y))
@@ -120,7 +133,16 @@ class game_state:
 
         Errors      : ValueError if `iterator` objects are not couples of Int
         '''
-        pass
+        
+        new_tiles = {t for t in iterator}
+
+        # We type-check each entry. This might slow down the insertion but
+        #  boards are assumed to be small and here safety beats peformances
+        f = lambda c: type(c[0]) != int or type(c[1]) != int
+        if any(filter(f, new_tiles)):
+            raise TypeError(f"Board entries have type int!")
+
+        self._board = self._board.union(new_tiles)
 
     def board_remove(self, x, y):
         ''' Remove the board place at position x, y. No error is raised if
@@ -136,7 +158,7 @@ class game_state:
 
         self._board.discard((x, y))
 
-    def board_remove_all(self, f):
+    def board_remove_all(self, f=None):
         ''' Remove all pieces of board for which f returns true. If no function is specified all objects are removed.
 
         f(x, y) -> bool     : `x`, `y` are the hole coordinates
@@ -145,7 +167,26 @@ class game_state:
         |                       consider removing pieces first with the same
         |                       filter f and method `piece_remove_all`
         '''
-        pass
+        
+        if f is None:
+            if self._pieces:
+                raise ValueError("Removing all tiles while pieces are "
+                    "still on the board")
+
+            self._board = set()
+
+        else:
+            # Note: This requires in the worst case 2N evaluations of f
+            #       it might be worth to optimize this in the future
+            #  
+            # check no piece makes f evaluates to True
+            if any(filter(lambda p: f(*p), self._pieces.keys())):
+                raise ValueError("Removing some tiles while pieces are "
+                    "still on them")
+
+            self._board = {(x, y) for (x, y) in self._board if not f(x, y)}
+            self._cache()
+
 
     # player methods
     def player_add(self):
@@ -194,13 +235,6 @@ class game_state:
         self._player_num -= 1
 
 
-    def player_num(self):
-        ''' Returns the number of currently playing players
-
-        Implementation Note: alias to len(_player_pieces)
-        '''
-        pass
-
     # game mechanics methods
     def paths(self, x, y):
         ''' Return a list of positions that a piece in (x, y) can reach
@@ -246,6 +280,7 @@ class game_state:
         '''
         pass
 
+
     # miscellaneous methods
     def shift(self, dx, dy):
         '''shift each element internal representation.
@@ -255,6 +290,76 @@ class game_state:
         be deprecated in future version
         '''
         pass
+
+
+    # Getters and Setters
+    @property
+    def pieces(self):
+        ''' Return a dictionary of pieces of the form (x, y) -> kind
+
+        Implementation Note: DO NOT return internals as they are passed by
+        reference. Even if the output has the same structure, a deep copy
+        should be made first
+        '''
+
+        # Note: As Tuples and Strings in python3 are immutable, a shallow
+        #       copy is enough                           
+        return self._pieces.copy()
+
+    @pieces.setter
+    def pieces(self, x):
+        raise AttributeError(f"Attempted to set pieces. Use `piece_add` "
+            "and `piece_remove` instead")
+
+    @property
+    def board(self):
+        ''' Returns a set-like object whose entries are board locations (x, y)
+
+        Implementation Note: DO NOT return internals as they are passed by
+        reference. Even if the output has the same structure, a deep copy should be made first.
+        '''
+
+        # Note: As tuples are immutable, returning a shallow copy is ok
+        return self._board.copy()
+
+    @board.setter
+    def board(self, x):
+        raise AttributeError(f"Attempted to directly set the board. Use "
+            "`board_add` and `board_remove` instead.")
+
+    @property
+    def player_num(self):
+        ''' Return the number of currently initialized players
+        '''
+        return self._player_num
+
+    @player_num.setter
+    def player_num(self, x):
+        raise AttributeError(f"Attempted to set players number to {x}. Use "
+            "`player_add`/`player_pop` instead.")
+
+    @property
+    def player(self):
+        ''' Return the current player's index
+        '''
+        return self._player
+
+    @player.setter
+    def player(self, x):
+        ''' Set the current player
+
+        Errors  : TypeError if x is not an integer
+        |       : ValueError if x is not in 0 < x < player_num - 1
+        '''
+
+        if type(x) != int:
+            raise TypeError("Setting current player's index to non-integer.")
+
+        if not (0 < x < self._player_num):
+            raise ValueError("Setting current player's index to an "
+                f"uninitialized player {x}")
+
+        self._player = x
 
     # debug methods
     def __str__(self):
@@ -270,22 +375,27 @@ class game_state:
 
 
 
-gs = game_state()
+#==============================================================================
+# Quick Interactive Object for Debugging
 
-while True:
-    cmd = input("> ")
-    argv = cmd.split(" ")
-    match argv[0]:
-        case "ab": 
-            gs.board_add(int(argv[1]), int(argv[2]))
+if __name__ == "__main__":
+    gs = GameState()
 
-        case "ap":
-            gs.piece_add(int(argv[1]), int(argv[2]), argv[3])
+    while True:
+        cmd = input("> ")
+        argv = cmd.split(" ")
+        match argv[0]:
+            case "ab": 
+                gs.board_add(int(argv[1]), int(argv[2]))
 
-        case "au":
-            gs.player_add()
+            case "ap":
+                gs.piece_add(int(argv[1]), int(argv[2]), argv[3])
 
-        case _ : 
-            print("I didn't understand that")
+            case "au":
+                gs.player_add()
 
-    print(gs)
+            case _ : 
+                print("I didn't understand that")
+
+        print(gs)
+        gs.pieces = 10
