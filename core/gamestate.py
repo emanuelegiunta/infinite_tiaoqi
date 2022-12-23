@@ -226,38 +226,54 @@ class GameState:
         if self._player is None:
             self._player = 0
 
-    def player_pop(self):
+    def player_pop(self, num=1):
         ''' Remove the last player.
         
         If the removed player was also the current player, the current player
         becomes player 0. When player 0 is removed, current player is set to
         None.
 
+        Nothing happens if there is no player to pop (or if we request to pop
+        more player than possible).
+
         Error       : ValueError if the pop-ed player still has pieces on the
         |               board. To remove all pieces of a player, call
         |               `.piece_remove_all(f)` with f being true for all
         |               pieces of kind p{i}.
+        |           : TypeError if num is not int
         '''
 
-        # Nothing happens if there is no player.
-        if self._player_num == 0:
-            return None
+        # TypeCheck
+        if type(num) != int:
+            raise TypeError(f"Expected int number of player to pop, got"
+                f"{type(num)}")
 
-        # Check if there is any piece left belonging to the last player.
-        #  -- Note: this code ASSUMES self._player_num > 0
-        for (x, y) in self._pieces.keys():
-            if self._pieces[(x, y)] == str(self._player_num - 1):
-                raise RuntimeError(f"Removing player {self._player_num - 1}"
+        # Check if there is any piece left belonging to the removed players.
+        p_indices = {str(i) for i in 
+                     range(self._player_num - num, self._player_num)}
+        
+        for point in self._pieces.keys():
+            if self._pieces[point] in p_indices:
+
+                # The error message uses the representation of player pieces
+                #  as strings of numbers
+                raise ValueError(f"Removing player {self._pieces[point]}"
                     f"while it still owns pieces on the board.")
 
-        # We adjust `_player` so that it matches the documented behaviour
-        if self._player_num == 1:
-            self._player = None
-        elif self._player_num == self._player:
-            self._player = 0
+        # We reduce the numer of players by num
+        self._player_num = max(0, self._player_num - num)
 
-        # Finally we reduce the numer of players by 1
-        self._player_num -= 1
+        # Finally we adjust the current player.
+        #  -> if we pop-ed the current player, player 0 is the new player
+        #  -> if we pop-ed all players, None is the new player
+        #
+        # Note: if current player is None, it should stay None
+        #
+        if self._player is not None and self._player >= self._player_num:
+            if self._player_num == 0:
+                self._player = None
+            else:
+                self._player = 0
 
     def player_next(self):
         ''' Pass the turn from the current playing player to the next one.
@@ -449,8 +465,41 @@ class GameState:
 
         Errors      : ValueError if (x1, y1) is not a piece
         |           : ValueError if (x2, y2) is a piece or not on board
+
+        The following behaviour are not currently errors, but they are
+        considered misusage of this method and may raise exceptions in future
+        version
+
+        |            : ___ start and end point coincides
         '''
-        pass
+        
+        if (x1, y1) not in self._ch_pieces:
+            # Choose the right error message
+            msg = ""
+
+            if (x1, y1) not in self._board:
+                msg = f"Moving a piece from out-of-board location ({x1}, {y1})"
+
+            else:
+                msg = f"Moving from ({x1}, {y1}) but no piece found there."
+
+            raise ValueError(msg)
+
+        if (x2, y2) not in self._board:
+            raise ValueError(f"Moving to out-of-board location ({x2}, {y2})")
+
+        if (x2, y2) in self._pieces:
+            raise ValueError(f"Moving to occupied tile ({x2}, {y2})")
+
+        # If all the previous cases were ok we have that
+        #
+        #  (x1, y1) is a piece
+        #  (x2, y2) is a free tile on board
+        #
+        #  Note: the following works even if (x1, y1) = (x2, y2)
+
+        self._pieces[(x2, y2)] = self._pieces.pop((x1, y1))
+        self._cache()
 
     # Memory Caching Methods
     def _cache(self):
