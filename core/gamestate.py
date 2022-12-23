@@ -206,14 +206,22 @@ class GameState:
 
 
     # player methods
-    def player_add(self):
+    def player_add(self, num=1):
         ''' Add a player with no pieces
-        
-        Implementation Note: Simply append [] to the list of players and
-        set `_player` to 0 if it was `None`.
+
+        num : number of player added
+
+        Error       : TypeError if num is not int
+        |           : ValueError if num < 1
         '''
         
-        self._player_num += 1
+        if type(num) != int:
+            raise TypeError(f"Expected int, got {type(num)}.")
+
+        if num < 1:
+            raise ValueError(f"Attempting to add {num} < 1 player(s)")
+
+        self._player_num += num
 
         if self._player is None:
             self._player = 0
@@ -251,6 +259,24 @@ class GameState:
         # Finally we reduce the numer of players by 1
         self._player_num -= 1
 
+    def player_next(self):
+        ''' Pass the turn from the current playing player to the next one.
+
+        This is mainly used internally at the end of each legal move, but in
+        variations where players are allowed to skip their turn, this should be
+        the method of choice (as opposed to directly modify the public
+        ".player")
+
+        Error       : ValueError if no player is currently playing
+        '''
+
+        if self._player_num == 0:
+            raise ValueError("Cannot pass player's round with no initialized" 
+                "players")
+
+        else:
+            self._player = (self._player + 1)%self._player_num
+
 
     # game mechanics methods
     def paths(self, x, y):
@@ -269,6 +295,11 @@ class GameState:
         Note: If a set of reacheable position is required one can use the 
                 set of keys, i.e. set(tree.keys()), as a surrogate
         '''
+
+        # check (x, y) is on board
+        if (x, y) not in self._board:
+            raise ValueError("Evaluating paths from out-of-board position "
+                f"({x}, {y}).")
         
         # BST Search
         tree = {(x, y): None}
@@ -332,17 +363,23 @@ class GameState:
         (x1, y1) has to be a piece of the current player. 
         The next player then becomes the new `current player`.
 
+        NOTE: currently the returned type is a list, but this API only ensures
+              a generator will be returned. Code depending on the list type
+              might be broken in future versions
+
         Errors      : ValueError if (x1, y1) is not a piece (use add instead!)
         |           : ValueError if (x1, y1) is not a current player piece
         |               (use `move_no_check` instead)
         |           : ValueError if there is no valid path from the two points.
         |               (if this is intended, use `move_no_checks` instead)
+        |           : ValueError if start and and point coincides
+                        (if you wish to skip a round, use `.player_pass`)
         '''
     
         # Check that x1, y1 is a current player piece
         if self._pieces.get((x1, y1), None) != str(self._player):
-            # choose the right error message
-
+            
+            # Choose the right error message
             msg = ""
             if (x1, y1) not in self._pieces.keys():
                 msg = f"Moving a piece from empty location ({x1}, {y1})."
@@ -376,6 +413,11 @@ class GameState:
 
             raise ValueError(msg)
 
+        # Check that (x2, y2) is NOT the starting point
+        if x1 == x2 and y1 == y2:
+            # Should this be a special case of "No Valid Path" Error?
+            raise ValueError(f"Moving a piece in ({x1, y1}) to the same tile.")
+
         # We can now move since
         #   1. a path is guaranteed
         #       1.1 hence the location is on board and is free
@@ -387,7 +429,7 @@ class GameState:
         self._cache()
 
         # We update player's turns
-        self._player = (self._player + 1)%self._player_num
+        self.player_next()
 
         # We build the path from tree
         path = []
