@@ -16,9 +16,12 @@ class TestGameState(unittest.TestCase):
     <    >  player_add()
     <    >  player_pop()
 
-    <    >  paths(x, y)
-    <    >  move(x1, y1, x2, y2)
-    <    >  move_force(x1, y1, x2, y2)
+    <DONE>  paths(x, y)
+    <DONE>  move(x1, y1, x2, y2)
+    <DONE>  move_force(x1, y1, x2, y2)
+    
+    Internals: 
+    <    >  _cache
     '''
 
     def setUp(self):
@@ -576,7 +579,6 @@ class TestGameState(unittest.TestCase):
 
         self.assertEqual(self.gs.paths(-1, 0), {(-1, 0): None})
 
-
     def test_move_errors(self):
         # SETUP: radius 1 ball
         #
@@ -703,6 +705,268 @@ class TestGameState(unittest.TestCase):
             # Since we have two players, the player counter should wrap to 0
             self.assertEqual(self.gs.player, 0)
             self.assertEqual(self.gs.pieces, D)
+
+    def test_move_force_errors(self):
+        # SETUP four tiles board
+        S = {(0, 0), (1, 0), (2, 0), (3, 0)}
+        self.gs.board_add_iter(S)
+        self.gs.piece_add(0, 0, "j")
+        self.gs.piece_add(2, 0, "j")
+        D = {(0, 0): "j", (2, 0): "j"}
+
+        assert self.gs.board == S 
+        assert self.gs.pieces == D 
+        assert self.gs.player_num == 0
+
+        # Moving piece from out-of-board tile
+        #
+        #  Note: 1, 0 is a free and empty position. Thus the error is ONLY 
+        #  the initial location being out-of-board
+        with self.subTest("from out-of-board"):
+            self.assertRaises(ValueError, self.gs.move_force, -1, 0, 1, 0)
+
+            # Safe recovery
+            self.assertEqual(self.gs.board, S)
+            self.assertEqual(self.gs.pieces, D)
+            self.assertEqual(self.gs.player_num, 0)
+
+        with self.subTest("from empty tile"):
+            self.assertRaises(ValueError, self.gs.move_force, 3, 0, 1, 0)
+
+            # Safe recovery
+            self.assertEqual(self.gs.board, S)
+            self.assertEqual(self.gs.pieces, D)
+            self.assertEqual(self.gs.player_num, 0)
+
+        with self.subTest("to out-of-board"):
+            self.assertRaises(ValueError, self.gs.move_force, 0, 0, -1, 0)
+
+            # Safe recovery
+            self.assertEqual(self.gs.board, S)
+            self.assertEqual(self.gs.pieces, D)
+            self.assertEqual(self.gs.player_num, 0)
+
+        with self.subTest("to occupied tile"):
+            self.assertRaises(ValueError, self.gs.move_force, 0, 0, 2, 0)
+
+            # Safe recovery
+            self.assertEqual(self.gs.board, S)
+            self.assertEqual(self.gs.pieces, D)
+            self.assertEqual(self.gs.player_num, 0)
+
+    def test_move_force(self):
+        # SETUP radius 1 circle
+        #
+        #          0 . 
+        # board = j u .
+        #          1 . 
+        #
+        S = {(0, 0)}.union(set(self.NEIGHBOURHOOD))
+        self.gs.board_add_iter(S)
+        self.gs.player_add(2)
+        self.gs.piece_add(1, -1, "j")
+        self.gs.piece_add(0, 0, "u")
+        self.gs.piece_add(1, 0, "0")
+        self.gs.piece_add(0, -1, "1")
+        D = {(1, -1): "j", (0, 0):"u", (1, 0):"0", (0, -1):"1"}
+
+        assert self.gs.board == S 
+        assert self.gs.pieces == D
+        assert self.gs.player_num == 2
+        assert self.gs.player == 0
+
+        # MOVE `0`: (1, 0) to (-1, 0)
+        #
+        #          . .
+        # board = j u .
+        #          1 0
+        #
+        # Note: this should be impossibile without forcing since u is unjump
+        with self.subTest("over unjump, in turn"):
+            self.gs.move_force(1, 0, -1, 0)
+            D[(-1, 0)] = D.pop((1, 0))
+
+            self.assertEqual(self.gs.board, S) 
+            self.assertEqual(self.gs.pieces, D)
+            self.assertEqual(self.gs.player, 0)
+
+        # MOVE `1`: (1, 0) to (-1, 0)
+        #
+        #          . 1
+        # board = j u .
+        #          . 0
+        #
+        # Note: this should be impossibile without forcing since it's P0's turn
+        with self.subTest("over unjump, out of turn"):
+            self.gs.move_force(0, -1, 0, 1)
+            D[(0, 1)] = D.pop((0, -1))
+
+            self.assertEqual(self.gs.board, S)
+            self.assertEqual(self.gs.pieces, D)
+            self.assertEqual(self.gs.player, 0)
+
+        # MOVE `j`: (1, -1) -> (-1, 1)
+        #
+        #          . 1
+        # board = . u j
+        #          . 0
+        #
+        # Note: this should be impossibile since `j` cannot be moved normaly
+        with self.subTest("over unjump, jump"):
+            self.gs.move_force(1, -1, -1, 1)
+            D[(-1, 1)] = D.pop((1, -1))
+
+            self.assertEqual(self.gs.board, S)
+            self.assertEqual(self.gs.pieces, D)
+            self.assertEqual(self.gs.player, 0)
+
+
+    def test_player_add(self):
+        # Initially there should be no players
+        with self.subTest("initial value is 0"):
+            self.assertEqual(self.gs.player_num, 0)
+            self.assertEqual(self.gs.player, None)
+
+        # Adding the first player makes player 0 the current player
+        with self.subTest("Adding first player"):
+            self.gs.player_add(1)
+            self.assertEqual(self.gs.player_num, 1)
+            self.assertEqual(self.gs.player, 0)
+
+        # Default Value adds one player
+        for i in range(2, 5+1):
+            with self.subTest("adding players, Default", i=i):
+                self.gs.player_add()
+                self.assertEqual(self.gs.player_num, i)
+                self.assertEqual(self.gs.player, 0)
+
+        # Adding custom number of players
+        n = 5
+        for num in (3, 5, 7, 11):
+            with self.subTest("adding players, Default", num=num):
+                self.gs.player_add(num)
+                n += num 
+                self.assertEqual(self.gs.player_num, n)
+                self.assertEqual(self.gs.player, 0)
+
+        # Testing Error: non-int number of new player
+        for num in (1.0, '3', (5,)):
+            with self.subTest("non-int new players", num=num):
+                self.assertRaises(TypeError, self.gs.player_add, num)
+
+                # Safe Recovery
+                self.assertEqual(self.gs.player_num, n)
+                self.assertEqual(self.gs.player, 0)
+
+        # Testing Error: num < 1
+        for num in range(-1, 1):
+            with self.subTest("non positive new players", num=num):
+                self.assertRaises(ValueError, self.gs.player_add, num)
+
+                # Safe Recovery
+                self.assertEqual(self.gs.player_num, n)
+                self.assertEqual(self.gs.player, 0)
+
+    def test_player_pop_behaviour(self):
+        # Removing from empty state does nothing
+        self.gs.player_pop()
+
+        with self.subTest("pop with no player"):
+            self.assertEqual(self.gs.player_num, 0)
+            self.assertEqual(self.gs.player, None)
+
+        # Removing the last player set current player to None
+        self.gs.player_add()
+
+        assert self.gs.player_num == 1
+        assert self.gs.player == 0
+
+        self.gs.player_pop()
+        with self.subTest("pop last"):
+            self.assertEqual(self.gs.player_num, 0)
+            self.assertEqual(self.gs.player, None)
+
+
+        # Removing last player when this is the current player set P0 as
+        #  current player
+        #
+        # Also, the default removes only one player
+        self.gs.player_add()
+        self.gs.player_add()
+        self.gs.player_next()
+
+        assert self.gs.player_num == 2
+        assert self.gs.player == 1
+
+        self.gs.player_pop()
+        with self.subTest("pop current player"):
+            self.assertEqual(self.gs.player_num, 1)
+            self.assertEqual(self.gs.player, 0)
+
+        # Removing multiple players form empty state does nothing
+        self.gs.player_pop()
+
+        assert self.gs.player_num == 0
+        assert self.gs.player == None
+
+        self.gs.player_pop(7)
+        with self.subTest("pop many with no player"):
+            self.assertEqual(self.gs.player_num, 0)
+            self.assertEqual(self.gs.player, None)
+
+        # Removing more than possibile does nothing more than removing all
+        self.gs.player_add(3)
+
+        assert self.gs.player_num == 3
+        assert self.gs.player == 0
+
+        self.gs.player_pop(7)
+        with self.subTest("pop too many"):
+            self.assertEqual(self.gs.player_num, 0)
+            self.assertEqual(self.gs.player, None)
+
+        # Removing many actually removes that many
+        self.gs.player_add(10)
+
+        assert self.gs.player_num == 10
+        assert self.gs.player == 0
+
+        self.gs.player_pop(7)
+        with self.subTest("pop 7 out of 10"):
+            self.assertEqual(self.gs.player_num, 3)
+            self.assertEqual(self.gs.player, 0)
+
+    def test_player_pop_error(self):
+
+        # The method only accepts integers values
+        for num in (3.0, "3", (3,)):
+            with self.subTest("typecheck", t=type(num)):
+                self.assertRaises(TypeError, self.gs.player_pop, num)
+
+        # We cannot remove players while they have pieces on board.
+        # SETUP
+        S = {(0, 0)}
+        self.gs.board_add_iter(S)
+        self.gs.player_add(2)
+        self.gs.piece_add(0, 0, "0")
+
+        assert self.gs.board == {(0, 0)}
+        assert self.gs.pieces == {(0, 0): "0"}
+        assert self.gs.player_num == 2
+        assert self.gs.player == 0
+
+        with self.subTest("Removing with pieces on board"):
+            self.assertRaises(ValueError, self.gs.player_pop, 2)
+
+
+
+
+
+
+
+
+
+
 
 
 
